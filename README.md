@@ -49,7 +49,7 @@ Uygulama gereksinimleri kurma ihtiyacı duyar ise, başlangıçta bekleme süres
 
 # lssrv - Slurm Partition State Summary Tool
 
-`lssrv` is a small tool which shows the load and state of the partitions managed by Slurm resource manager and scheduler. It's designed to make the cluster state visible and understandable to help administers to understand load distribution and users to see, understand and make informed decisions while selecting a partition to submit their jobs.
+`lssrv` is a small tool which shows the load and state of the partitions in clusters managed by Slurm resource manager and scheduler. It's designed to make the cluster state visible and understandable to system administrators and users to see, understand and make informed decisions while selecting a partition to submit their jobs.
 
 `lssrv` shows the partitions and most relevant information about them as an easy to read and understand table.
 
