@@ -66,7 +66,7 @@ Uygulama gereksinimleri kurma ihtiyacı duyar ise, başlangıçta bekleme süres
 
 ## Installation
 
-`lssrv` doesn't require any changes in Slurm configuration. The installation can be completed bu copying the files to their respective places.
+`lssrv` doesn't require any changes in Slurm configuration. The installation can be completed by copying the files to their respective places.
 
 ### Dependencies
 
