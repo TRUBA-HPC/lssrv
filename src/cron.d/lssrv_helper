@@ -1,0 +1,5 @@
+# lssrv helper cron script. Path and period is tunable, DO NOT edit squeue command.
+# Add this file to /etc/cron.d and make it executable.
+
+*/5 * * * * squeue -O partition,numcpus,state,reason:30 -h > /var/cache/lssrv/squeue.state
+
