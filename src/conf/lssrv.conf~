@@ -1,9 +1,0 @@
-# This is a simple configuration file for lssrv.
-
-[General]
-# This configuration option decides where lssrv reads current squeue state.
-squeue_state_file_path = /var/cache/lssrv/squeue.state
-
-[Partitions]
-# These partitions will be hidden from the output, in a non-overrideable way. Separate with space.
-partitions_to_hide = sage
