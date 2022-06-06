@@ -8,6 +8,7 @@ Global changelog file. Please use markdown formatting and write most recent chan
 - fix: Increase partition field to 64 characters in cron job to make multi-partition jobs fit into the line.
 - fluff: Improve f-strings based logging to prevent unnecessary type casts.
 - fluff: Bump version to 0.0.5a20220606.
+- fluff: Move code constants to the top for easier maintentance.
 
 ## 20220509
 

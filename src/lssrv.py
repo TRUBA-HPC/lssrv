@@ -38,6 +38,12 @@ from rich.console import Console
 from rich.table import Table
 from rich.markdown import Markdown
 
+# Code constants. Moved here for easier code maintenance and debugging.
+
+VERSION = '0.0.5a20220606'
+LOG_LEVEL = logging.ERROR
+LOG_FILE_PATH = None
+
 class Partition:
 	'''
 	@summary: This object contains every partition in the cluster and every detail accessible by the user.
@@ -162,12 +168,12 @@ if __name__ == '__main__':
 	argument_parser.description = 'A tool to see partitions\' state in the cluster.'
 
 	# Version always comes last.
-	argument_parser.add_argument ('-V', '--version', help='Print ' + argument_parser.prog + ' version and exit.', action='version', version=argument_parser.prog + ' version 0.0.5a20220606')    
+	argument_parser.add_argument ('-V', '--version', help='Print ' + argument_parser.prog + ' version and exit.', action='version', version=argument_parser.prog + ' version ' + VERSION)    
 
 	arguments = argument_parser.parse_args()
 	
 	# Set up simple logging:
-	logging.basicConfig(filename=None, level=logging.DEBUG)
+	logging.basicConfig(filename=LOG_FILE_PATH, level=LOG_LEVEL)
 	
 	logger = logging.getLogger('main')
 	
