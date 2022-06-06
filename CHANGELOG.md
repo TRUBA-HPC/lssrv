@@ -2,6 +2,17 @@
 
 Global changelog file. Please use markdown formatting and write most recent changes on top. Dates use ISO formatting.
 
+## 20220606
+
+- fix: Correct handling of multi-partition spanning jobs.
+- fluff: Improve f-strings based logging to prevent unnecessary type casts.
+- fluff: Bump version to 0.0.5a20220606.
+
+## 20220509
+
+- Change all logging lines to f-strings to increase readability.
+- Bump version to 0.0.5a20220509
+
 ## 20220506
 
 - Added Eclipse PyDev project files to the repository.

@@ -21,7 +21,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 @author: Hakan Bayindir
 @contact: hakan.bayindir@tubitak.gov.tr
 @license: GNU/GPLv3
-@version: 0.0.5a20220506
+@version: 0.0.5a20220509
 '''
 
 import os
@@ -59,7 +59,7 @@ class Partition:
 		# Will fill properties to a dictionary and will transfer to variables then.
 		for property in partition_property_bundle:
 			
-			logger.debug('Processing feature: ' + str(property))
+			logger.debug('Processing feature: %s.', str(property))
 			
 			# Extract the property name and value.
 			property_name_and_value = property.split(b'=')
@@ -67,7 +67,7 @@ class Partition:
 			# Directly create a new variable with the string coming from the property list.
 			setattr(self, property_name_and_value[0].decode('utf-8'), property_name_and_value[1].decode('utf-8'))
 		
-		logger.debug('Extracted partition properties: ' + str(dir(self)))
+		logger.debug('Extracted partition properties: %s.', str(dir(self)))
 		
 		# Also, create partition load variables
 		self.pending_jobs_per_category = dict()
@@ -96,7 +96,7 @@ def get_all_partitions():
 	# Line is ending with \n. Always strip before splitting.
 	partitions = subprocess.check_output(['scontrol', 'show', 'partition', '-o']).strip().split(b'\n')
 	
-	logger.info('Have read ' + str(len(partitions)) + ' partition(s).')
+	logger.info('Have read %d partition(s).', len(partitions))
 	
 	# Create a list for storing partition objects.
 	partitions_dictionary = dict()
@@ -105,7 +105,7 @@ def get_all_partitions():
 		temporary_partition = Partition(partition)
 		partitions_dictionary[temporary_partition.PartitionName] = temporary_partition
 	
-	logger.debug('Returning ' + str(len(partitions)) + ' partition(s).')
+	logger.debug('Returning %d partition(s).', len(partitions))
 	return partitions_dictionary
 
 def get_job_state_for_partitions(partitions, partitions_to_ignore, queue_state_file_path):
@@ -121,6 +121,7 @@ def get_job_state_for_partitions(partitions, partitions_to_ignore, queue_state_f
 	
 	#TODO: Add exception handling here. Sometimes previous command returns nothing. 
 	for job in jobs_in_the_cluster:
+		logger.debug('Job line to process is %s.', job)
 		splitted_line = job.split()
 		job_partition = splitted_line[0].strip()
 		job_core_count = splitted_line[1].strip()
@@ -136,19 +137,20 @@ def get_job_state_for_partitions(partitions, partitions_to_ignore, queue_state_f
 			continue
 
 		# Parse the job state and fill relevant information accordingly.
+		# The following logging lines use %s for 'job_core_count' because they arrive as strings already.
 		if job_state == 'RUNNING':
-			logger.debug('Job is running with ' + job_core_count + 'core(s) on partition ' + job_partition + '.')
+			logger.debug('Job is running with %s core(s) on partition %s.', job_core_count, job_partition)
 			partitions[job_partition].busy_cpu_count = partitions[job_partition].busy_cpu_count + int(job_core_count)
 		
 		elif job_state == 'PENDING':
-			logger.debug('Job is running with ' + job_core_count + 'core(s) on partition ' + job_partition + ', because of ' + job_reason + '.')
+			logger.debug('Job is waiting with a request for %s core(s) on partition %s, because of %s.', job_core_count, job_partition, job_reason)
 			
 			# Let's check whether whether we already have a counter for the reason at hand. If not, create one.
 			if job_reason in partitions[job_partition].pending_jobs_per_category:
-				logger.debug('Incrementing key ' + job_reason + ' for partition ' + job_partition + ' by 1.')
+				logger.debug('Incrementing key %s for partition %s by 1.', job_reason, job_partition)
 				partitions[job_partition].pending_jobs_per_category[job_reason] = partitions[job_partition].pending_jobs_per_category[job_reason] + 1 
 			else:
-				logger.debug('Creating key ' + job_reason + ' for partition ' + job_partition + ' and setting it to 1.')
+				logger.debug('Creating key %s for partition %s and setting it to 1.', job_reason, job_partition)
 				partitions[job_partition].pending_jobs_per_category[job_reason] = 1
 				
 			# This needs to be incremented anyway:
@@ -160,12 +162,12 @@ if __name__ == '__main__':
 	argument_parser.description = 'A tool to see partitions\' state in the cluster.'
 
 	# Version always comes last.
-	argument_parser.add_argument ('-V', '--version', help='Print ' + argument_parser.prog + ' version and exit.', action='version', version=argument_parser.prog + ' version 0.0.5a20220506')    
+	argument_parser.add_argument ('-V', '--version', help='Print ' + argument_parser.prog + ' version and exit.', action='version', version=argument_parser.prog + ' version 0.0.5a20220606')    
 
 	arguments = argument_parser.parse_args()
 	
 	# Set up simple logging:
-	logging.basicConfig(filename=None, level=logging.ERROR)
+	logging.basicConfig(filename=None, level=logging.DEBUG)
 	
 	logger = logging.getLogger('main')
 	
@@ -184,8 +186,8 @@ if __name__ == '__main__':
 			logger.debug('Cannot find configuration value for partitions to ignore, using defaults.')
 			partitions_to_ignore = list() # The default value is an empty list for that.	
 		
-		logger.debug('Got ' + str(len(partitions_to_ignore)) + ' partitions to ignore.')
-		logger.debug('Partition(s) to ignore: ' + str(partitions_to_ignore))
+		logger.debug('Got %d partitions to ignore.', len(partitions_to_ignore))
+		logger.debug('Partition(s) to ignore: %s.', str(partitions_to_ignore))
 		
 		try:		
 			queue_state_file_path = configuration['General']['squeue_state_file_path'].strip()
@@ -193,7 +195,7 @@ if __name__ == '__main__':
 			logger.debug('Cannot find configuration value for squeue state file, using default.')
 			queue_state_file_path = '/var/cache/lssrv/squeue.state' # Use standard file path conventions, keep the system tidy.
 			
-		logger.debug('squeue state file is: ' + str(queue_state_file_path))	
+		logger.debug('squeue state file is: %s.', queue_state_file_path)	
 	else:
 		# Loading all the defaults automatically.
 		partitions_to_ignore = list() # The default value is an empty list for that.
