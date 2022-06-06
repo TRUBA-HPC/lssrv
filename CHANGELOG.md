@@ -5,6 +5,7 @@ Global changelog file. Please use markdown formatting and write most recent chan
 ## 20220606
 
 - fix: Correct handling of multi-partition spanning jobs.
+- fix: Increase partition field to 64 characters in cron job to make multi-partition jobs fit into the line.
 - fluff: Improve f-strings based logging to prevent unnecessary type casts.
 - fluff: Bump version to 0.0.5a20220606.
 
