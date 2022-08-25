@@ -77,11 +77,11 @@ Uygulama gereksinimleri kurma ihtiyacı duyar ise, başlangıçta bekleme süres
 
 ### Installation Steps
 
-1. Create the cache folder with `mkdir -p /var/cache/lssrv` command. Change the owner to `root:root` and permissions permissions to `755 (drwxr-xr-x)`.
+1. Create the cache folder with `mkdir -p /var/cache/lssrv` command. Change the owner to `root:root` and permissions to `755 (drwxr-xr-x)`.
 2. Copy `/src/lssrv.py` and `/src/lssrv` to `/usr/local/bin/` folder. Change the owner to `root:root` and permissions to `755 (-rwxr-xr-x)`.
 3. Copy `/src/cron.d/lssrv_helper` to `/etc/cron.d/`. Change the owner to `root:root` and permissions to `644 (-rw-r--r--)`.
 4. Copy `/src/conf/lssrv.conf` file to `/etc/` folder. Change the owner to `root:root` and permissions to `644 (-rw-r--r--)`.
 
-After cron runs once, the `/var/cache/lssrv/squeue.state` file will be created. After that, you can run `lssrv` command to test the tool.
+After cron runs once, the `/var/cache/lssrv/squeue.state` file will be created. Afterwards, you can run `lssrv` command to test the tool.
 
 The initial startup might take some time if dependencies are being installed, but it's a one time process.
