@@ -2,6 +2,13 @@
 
 Global changelog file. Please use markdown formatting and write most recent changes on top. Dates use ISO formatting.
 
+## 20240111
+
+- refactor: Start rewriting in Go.
+- proj: Add data structures required for partitions.
+- proj: Add Uber's Zap logging package for logging.
+- proj: Enable Go modules.
+
 ## 20220606
 
 - fix: Correct handling of multi-partition spanning jobs.
