@@ -19,8 +19,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"go.uber.org/zap"
+	"os"
+	"os/exec"
+	"strconv"
 )
 
 // This is our basic data structure which holds everything about a SLURM partition
@@ -39,10 +43,10 @@ type Partition struct {
 	totalNodes uint // Total number of nodes (servers) in this partition.
 
 	// Processor geometry per node in this partition.
-	socketsPerNode uint // How many CPU sockets a node have.
-	coresPerSocket uint // How many cores we have per CPU socket.
-	threadsPerCore uint // How many threads a core can execute (It's two for HyperThreading/SMT systems).
-	totalCores     uint // How many cores we have in total, per node.
+	socketsPerNode    uint // How many CPU sockets a node have.
+	coresPerSocket    uint // How many cores we have per CPU socket.
+	threadsPerCore    uint // How many threads a core can execute (It's two for HyperThreading/SMT systems).
+	totalCoresPerNode uint // How many cores we have in total, per node.
 
 	// Nodes' memory is also a concern for us.
 	memoryPerNode uint // This is RAM per node, in megabytes.
@@ -51,6 +55,7 @@ type Partition struct {
 	// Job parameters for this partition.
 	minimumNodesPerJob uint // Minimum number of nodes we can allocate per job.
 	maximumNodesPerJob int  // Maximum number of nodes we can allocate per job. -1 means infinite.
+	maximumCoresPerJob int  // Maximum number of cores allowed per job. -1 means infinite.
 
 	// Time limits imposed by this partition.
 	// Left as string because we don't plan to process them at this point.
@@ -62,6 +67,127 @@ type Partition struct {
 	runningJobsCount         uint // Number of running jobs on this partition.
 	waitingJobsCount         uint // Number of waiting jobs on this partition. Doesn't contain resource waiting jobs.
 	resourceWaitingJobsCount uint // Total number of jobs waiting because of resources.
+}
+
+// This function runs sinfo command with an hard coded argument list, because we need
+// an output with the format we specified.
+func getPartitions(logger *zap.SugaredLogger) []byte {
+	logger.Debugf("getPartitions reporting in.")
+	//TODO: Run sinfo here, get the output, store in an array line by line, and return.
+
+	// Check whether we have the command in the OS, so we can continue safely.
+	path, err := exec.LookPath("sinfo")
+
+	if err != nil {
+		// And exit gracefully if we don't have that.
+		logger.Fatalf("Cannot find sinfo executable (error is %s), exiting.", err)
+		os.Exit(1)
+	}
+
+	logger.Debugf("sinfo is found at %s.", path)
+
+	// Build a command object so we can run it.
+	commandToRun := exec.Command(path, "--format=%R|%a|%D|%B|%c|%C|%s|%z|%l|%m")
+
+	// Let it run!
+	logger.Debugf("Will be running the command %s with args %s.", commandToRun.Path, commandToRun.Args)
+	partitionInformation, err := commandToRun.Output()
+
+	if err != nil {
+		logger.Fatalf("sinfo command returned an error (error is %s)", err)
+	}
+
+	// We have an extra line at the end of the output, let's trim this.
+	partitionInformation = bytes.TrimRight(partitionInformation, "\n")
+
+	logger.Debugf("Got the partition information, returning.")
+	return partitionInformation
+}
+
+func parsePartitionInformation(partitionInformation []byte, logger *zap.SugaredLogger) map[string]Partition {
+	// We'll start by dividing the partition information to lines.
+	partitionInformationLines := bytes.Split(partitionInformation, []byte("\n"))
+
+	// Let's see what we got.
+	logger.Debugf("Partition information has returned %d line(s).", len(partitionInformationLines))
+
+	/*
+	 * The idea here is to compare the header with a known good value to check that
+	 * everything is formatted the way we want. Then we can continue parsing the rest.
+	 */
+	logger.Debugf("Checking command output, comparing headers.")
+
+	referenceHeader := "PARTITION|AVAIL|NODES|MAX_CPUS_PER_NODE|CPUS|CPUS(A/I/O/T)|JOB_SIZE|S:C:T|TIMELIMIT|MEMORY"
+
+	if string(partitionInformationLines[0]) != referenceHeader {
+		logger.Errorf("Command output header doesn't match required template. This version of sinfo is not compatible, exiting.")
+		os.Exit(1)
+	}
+
+	logger.Debugf("Header check is passed.")
+
+	// Discard the header since we don't need that anymore.
+	partitionInformationLines = partitionInformationLines[1:]
+	logger.Debugf("Partition information now has %d line(s).", len(partitionInformationLines))
+
+	// Create a map to hold the partitions, indexed by their name (hold that thought).
+	partitionMap := make(map[string]Partition)
+
+	// Start traversing the partitions we have.
+	for index, value := range partitionInformationLines {
+		logger.Debugf("Partition #%d is %s.", index, value)
+
+		// And split them according to the divider we selected before.
+		partitionFields := bytes.Split(value, []byte("|"))
+		// Always show your results to check them.
+		logger.Debugf("Partition line is splitted as %s.", partitionFields)
+
+		// Let's create a partition and start to fill it up.
+		var partitionToParse Partition
+
+		partitionToParse.name = string(partitionFields[0])
+		partitionToParse.state = string(partitionFields[1])
+
+		// Parsing the total number of nodes is a bit involved.
+		totalNodes, err := strconv.ParseUint(string(partitionFields[2]), 10, 32)
+
+		if err != nil {
+			logger.Fatalf("Cannot convert node count %s to integer (err is %s), exiting.", string(partitionFields[2]), err)
+		}
+		// That shouldn't overflow since I'm already parsing 32 bit integers, and we don't have that number of servers.
+		partitionToParse.totalNodes = uint(totalNodes)
+
+		// Max CPUs per node is next, and it's a bit complicated.
+		// If it's unlimited, we'll set the value to "-1".
+		if string(partitionFields[3]) == "UNLIMITED" {
+			logger.Debugf("Partition %s has unlimited processor limit, setting value to -1.", partitionToParse.name)
+			partitionToParse.maximumCoresPerJob = -1
+		} else {
+			// Otherwise parse the integer store in the appropriate field.
+			maximumCoresPerJob, err := strconv.ParseInt(string(partitionFields[3]), 10, 32)
+			if err != nil {
+				logger.Fatalf("Cannot convert maximum core count %s to integer (err is %s), exiting.", string(partitionFields[3]), err)
+			}
+			// That shouldn't overflow since I'm already parsing 32 bit integers, and we don't have that number of cores in a server.
+			partitionToParse.maximumCoresPerJob = int(maximumCoresPerJob)
+			logger.Debugf("Maximum cores per job for partition %s is set to %d.", partitionToParse.name, partitionToParse.maximumCoresPerJob)
+		}
+
+		// Next is CPUs per node.
+		totalCoresPerNode, err := strconv.ParseUint(string(partitionFields[4]), 10, 32)
+
+		if err != nil {
+			logger.Fatalf("Cannot convert CPU count per node %s to integer (err is %s), exiting.", string(partitionFields[4]), err)
+		}
+
+		partitionToParse.totalCoresPerNode = uint(totalCoresPerNode)
+		logger.Debugf("Total cores per node for partition %s is set to %d.", partitionToParse.name, partitionToParse.totalCoresPerNode)
+
+		// Add the completed partition to the map.
+		partitionMap[partitionToParse.name] = partitionToParse
+	}
+
+	return partitionMap
 }
 
 func main() {
@@ -90,7 +216,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	
+
 	// Initialize the logger with the configuration object we just built.
 	logger := zap.Must(zapRuntimeConfig.Build())
 
@@ -99,6 +225,14 @@ func main() {
 	// If the logger has been started, get a Sugared logger:
 	sugaredLogger := logger.Sugar()
 	sugaredLogger.Debugf("Logger is up.")
-	
+
 	sugaredLogger.Infof("Hello, world!")
+
+	// Start by getting the partitions & the raw information via sinfo.
+	partitionInformation := getPartitions(sugaredLogger)
+
+	// Let's look what we have returned.
+	sugaredLogger.Debugf("Partition information returned as follows:\n%s", partitionInformation)
+
+	parsePartitionInformation(partitionInformation, sugaredLogger)
 }

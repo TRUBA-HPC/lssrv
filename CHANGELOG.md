@@ -2,6 +2,14 @@
 
 Global changelog file. Please use markdown formatting and write most recent changes on top. Dates use ISO formatting.
 
+## 20240112
+
+- feat: Start parsing the command output into the `Partition` structures.
+- feat: Implemented `sinfo` integration.
+- feat: Implemented header verification to check output compatibility.
+- refactor: Move go module files to correct places in the tree.
+- refactor: Rename `lssrv` to `lssrv-launcher.py` to prevent name clashes during `go build`.
+
 ## 20240111
 
 - refactor: Start rewriting in Go.
