@@ -20,11 +20,11 @@ package main
 
 import (
 	"bytes"
+	"strconv"
 	"encoding/json"
 	"go.uber.org/zap"
 	"os"
 	"os/exec"
-	"strconv"
 )
 
 // This is our basic data structure which holds everything about a SLURM partition
@@ -34,28 +34,29 @@ type Partition struct {
 	state string // Normally a partition can be up or down. So it may change to bool later.
 
 	// Following are the stats about our processors.
-	totalProcessors     uint // Total number of processors in this partition.
-	allocatedProcessors uint // Number of allocated processors in this partition.
-	idleProcessors      uint // Number of idle processors in this partition.
-	otherProcessors     uint // Number of processors in "other" state in this partition.
+	totalProcessors     string // Total number of processors in this partition.
+	allocatedProcessors string // Number of allocated processors in this partition.
+	idleProcessors      string // Number of idle processors in this partition.
+	otherProcessors     string // Number of processors in "other" state in this partition.
 
 	// Following are related about nodes in the partition.
-	totalNodes uint // Total number of nodes (servers) in this partition.
+	totalNodes string // Total number of nodes (servers) in this partition.
 
 	// Processor geometry per node in this partition.
-	socketsPerNode    uint // How many CPU sockets a node have.
-	coresPerSocket    uint // How many cores we have per CPU socket.
-	threadsPerCore    uint // How many threads a core can execute (It's two for HyperThreading/SMT systems).
-	totalCoresPerNode uint // How many cores we have in total, per node.
+	socketsPerNode    string // How many CPU sockets a node have.
+	coresPerSocket    string // How many cores we have per CPU socket.
+	threadsPerCore    string // How many threads a core can execute (It's 2 for HyperThreading/SMT systems).
+	totalCoresPerNode string // How many cores we have in total, per node.
 
 	// Nodes' memory is also a concern for us.
-	memoryPerNode uint // This is RAM per node, in megabytes.
-	memoryPerCore uint // This contains RAM per core, in megabytes.
+	totalMemoryPerNode string // This is RAM per node, in megabytes.
+	totalMemoryPerCore uint   // This contains RAM per core, in megabytes.
+	totalMemoryPerCoreSuffix string // If the partition is heterogenous, sinfo reports the minimum amount, followed by a "+". This is where we store it.
 
 	// Job parameters for this partition.
-	minimumNodesPerJob uint // Minimum number of nodes we can allocate per job.
-	maximumNodesPerJob int  // Maximum number of nodes we can allocate per job. -1 means infinite.
-	maximumCoresPerJob int  // Maximum number of cores allowed per job. -1 means infinite.
+	minimumNodesPerJob string // Minimum number of nodes we can allocate per job.
+	maximumNodesPerJob string // Maximum number of nodes we can allocate per job.
+	maximumCoresPerJob string // Maximum number of cores allowed per job.
 
 	// Time limits imposed by this partition.
 	// Left as string because we don't plan to process them at this point.
@@ -148,46 +149,84 @@ func parsePartitionInformation(partitionInformation []byte, logger *zap.SugaredL
 		partitionToParse.name = string(partitionFields[0])
 		partitionToParse.state = string(partitionFields[1])
 
-		// Parsing the total number of nodes is a bit involved.
-		totalNodes, err := strconv.ParseUint(string(partitionFields[2]), 10, 32)
+		// We'll be copying the string as is to the field, since we won't be doing anything with these as numbers.
+		partitionToParse.totalNodes = string(partitionFields[2])
+		logger.Debugf("Total node(s) in this partition is %s.", partitionToParse.totalNodes)
 
-		if err != nil {
-			logger.Fatalf("Cannot convert node count %s to integer (err is %s), exiting.", string(partitionFields[2]), err)
-		}
-		// That shouldn't overflow since I'm already parsing 32 bit integers, and we don't have that number of servers.
-		partitionToParse.totalNodes = uint(totalNodes)
-
-		// Max CPUs per node is next, and it's a bit complicated.
-		// If it's unlimited, we'll set the value to "-1".
-		if string(partitionFields[3]) == "UNLIMITED" {
-			logger.Debugf("Partition %s has unlimited processor limit, setting value to -1.", partitionToParse.name)
-			partitionToParse.maximumCoresPerJob = -1
-		} else {
-			// Otherwise parse the integer store in the appropriate field.
-			maximumCoresPerJob, err := strconv.ParseInt(string(partitionFields[3]), 10, 32)
-			if err != nil {
-				logger.Fatalf("Cannot convert maximum core count %s to integer (err is %s), exiting.", string(partitionFields[3]), err)
-			}
-			// That shouldn't overflow since I'm already parsing 32 bit integers, and we don't have that number of cores in a server.
-			partitionToParse.maximumCoresPerJob = int(maximumCoresPerJob)
-			logger.Debugf("Maximum cores per job for partition %s is set to %d.", partitionToParse.name, partitionToParse.maximumCoresPerJob)
-		}
+		// Maximum cores per job, for this partition.
+		partitionToParse.maximumCoresPerJob = string(partitionFields[3])
+		logger.Debugf("Maximum core(s) per job for this partition is %s.", partitionToParse.maximumCoresPerJob)
 
 		// Next is CPUs per node.
-		totalCoresPerNode, err := strconv.ParseUint(string(partitionFields[4]), 10, 32)
+		partitionToParse.totalCoresPerNode = string(partitionFields[4])
+		logger.Debugf("Total core(s) per node is %s.", partitionToParse.totalCoresPerNode)
 
-		if err != nil {
-			logger.Fatalf("Cannot convert CPU count per node %s to integer (err is %s), exiting.", string(partitionFields[4]), err)
+		// Now we will parse the processor counts per queue. It's stored as "Allocated/Idle/Other/Total".
+		processorCounts := bytes.Split(partitionFields[5], []byte("/"))
+		partitionToParse.allocatedProcessors = string(processorCounts[0])
+		partitionToParse.idleProcessors = string(processorCounts[1])
+		partitionToParse.otherProcessors = string(processorCounts[2])
+		partitionToParse.totalProcessors = string(processorCounts[3])
+		logger.Debugf("Processor counts for partition is %s/%s/%s/%s (Available/Idle/Other/Total).", partitionToParse.allocatedProcessors, partitionToParse.idleProcessors, partitionToParse.otherProcessors, partitionToParse.totalProcessors)
+
+		// Next we'll handle the node count limitations per job. Format is "minimum-maximum"
+		nodeCounts := bytes.Split(partitionFields[6], []byte("-"))
+		partitionToParse.minimumNodesPerJob = string(nodeCounts[0])
+		partitionToParse.maximumNodesPerJob = string(nodeCounts[1])
+		logger.Debugf("Node count limits for this partition is between %s and %s.", partitionToParse.minimumNodesPerJob, partitionToParse.maximumNodesPerJob)
+
+		// We have processor geometry per node, which again needs some processing. The format is "Sockets per node:Cores per socket:Threads per core".
+		processorGeometry := bytes.Split(partitionFields[7], []byte(":"))
+		partitionToParse.socketsPerNode = string(processorGeometry[0])
+		partitionToParse.coresPerSocket = string(processorGeometry[1])
+		partitionToParse.threadsPerCore = string(processorGeometry[2])
+		logger.Debugf("Processor geometry for this partition is %s:%s:%s (Sockets per node:Cores per socket:Threads per core)", partitionToParse.socketsPerNode, partitionToParse.coresPerSocket, partitionToParse.threadsPerCore)
+
+		// Time limit comes next.
+		partitionToParse.maximumTimePerJob = string(partitionFields[8])
+		logger.Debugf("Maximum time per job in this partition is %s.", partitionToParse.maximumTimePerJob)
+
+		// Lastly we have the total memory amount per server.
+		partitionToParse.totalMemoryPerNode = string(partitionFields[9])
+		logger.Debugf("Total memory per node is %s.", partitionToParse.totalMemoryPerNode)
+		
+		// We will calculate memory per core. This will be a little involved.
+		memoryInformation := bytes.Split(partitionFields[9], []byte("+"))
+		logger.Debugf("Memory information contains %d part(s).", len(memoryInformation))
+		
+		// If we have the suffix, add it.
+		if len(memoryInformation) > 1 {
+			partitionToParse.totalMemoryPerCoreSuffix = "+"
 		}
-
-		partitionToParse.totalCoresPerNode = uint(totalCoresPerNode)
-		logger.Debugf("Total cores per node for partition %s is set to %d.", partitionToParse.name, partitionToParse.totalCoresPerNode)
+		
+		// This part is a bit involved. We need to divide some numbers to get an actual value.
+		totalMemoryPerNode, err := strconv.ParseUint(string(memoryInformation[0]), 10, 64)
+		
+		if err != nil {
+			logger.Fatalf("Cannot convert total memory amount to uint (error is %s).", err)
+		}
+		
+		// We also need to handle the "+" suffix if the partition we're working on is heterogenous.
+		totalCoreCountPerNode, err := strconv.ParseUint(string(bytes.Split(partitionFields[4], []byte("+"))[0]), 10, 64)
+		
+		if err != nil {
+			logger.Fatalf("Cannot convert total core count to uint (error is %s).", err)
+		}
+		
+		partitionToParse.totalMemoryPerCore = uint(totalMemoryPerNode) / uint(totalCoreCountPerNode)
+		logger.Debugf("This partition has %dMB of RAM per core.", partitionToParse.totalMemoryPerCore)
 
 		// Add the completed partition to the map.
 		partitionMap[partitionToParse.name] = partitionToParse
 	}
-
+	
 	return partitionMap
+}
+
+// Following function parses the queue state function and adds the information to the relevant partition.
+// It basically parses the file line by line and counts the job states.
+func parseQueueState (partitionsToUpdate *map[string]Partition, queueStateFilePath string, logger *zap.SugaredLogger) {
+	// As a good, defensive programmer, we need to make sure that the 
 }
 
 func main() {
