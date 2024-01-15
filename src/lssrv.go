@@ -105,6 +105,10 @@ func getPartitions(logger *zap.SugaredLogger) []byte {
 	return partitionInformation
 }
 
+/*
+ * This function parses the partition information we got from sinfo command and returns us
+ * the partition map we'll further process with waiting and total jobs data.
+ */
 func parsePartitionInformation(partitionInformation []byte, logger *zap.SugaredLogger) map[string]Partition {
 	// We'll start by dividing the partition information to lines.
 	partitionInformationLines := bytes.Split(partitionInformation, []byte("\n"))
@@ -214,7 +218,7 @@ func parsePartitionInformation(partitionInformation []byte, logger *zap.SugaredL
 		}
 		
 		partitionToParse.totalMemoryPerCore = uint(totalMemoryPerNode) / uint(totalCoreCountPerNode)
-		logger.Debugf("This partition has %dMB of RAM per core.", partitionToParse.totalMemoryPerCore)
+		logger.Debugf("This partition has %d%sMB of RAM per core.", partitionToParse.totalMemoryPerCore, partitionToParse.totalMemoryPerCoreSuffix)
 
 		// Add the completed partition to the map.
 		partitionMap[partitionToParse.name] = partitionToParse
@@ -223,10 +227,110 @@ func parsePartitionInformation(partitionInformation []byte, logger *zap.SugaredL
 	return partitionMap
 }
 
-// Following function parses the queue state function and adds the information to the relevant partition.
-// It basically parses the file line by line and counts the job states.
+/*
+ *Following function parses the queue state function and adds the information to the
+ * relevant partition. It basically parses the file line by line and counts the job
+ * states.
+ */
 func parseQueueState (partitionsToUpdate *map[string]Partition, queueStateFilePath string, logger *zap.SugaredLogger) {
-	// As a good, defensive programmer, we need to make sure that the 
+	// As a good, defensive programmer, we need to make sure that the file is there and we can read it before trying to parse it.
+	fileInfo, err := os.Stat(queueStateFilePath)
+	
+	if err != nil {
+		logger.Fatalf("Cannot stat queue state file %s (error is %s).", queueStateFilePath, err)
+	}
+	
+	// Let's print what we have found so far.
+	logger.Debugf("File information is as follows:")
+	logger.Debugf("File name: %s", fileInfo.Name())
+	logger.Debugf("Is a directory: %t", fileInfo.IsDir())
+	logger.Debugf("Permissions are: %s", fileInfo.Mode().Perm().String())
+	logger.Debugf("Last modification time: %s", fileInfo.ModTime())
+	
+	// If we're here, it means we're good so far. Let's open the file in read-only mode.
+	// Open is a shorthand for opening a file in read-only mode. 
+	stateFile, err := os.Open(queueStateFilePath)
+	defer stateFile.Close() // Do not forget to close the file when the function ends.
+	
+	// Be vigilant!
+	if err != nil {
+		logger.Fatalf("There was an error while opening queue state file %s (error is %s).", queueStateFilePath, err)
+	}
+	
+	// Read the file into the memory.
+	// I'll be doing a complete read into memory, since the file is >50KB, and I don't have time to optimize this.
+	// TODO: Convert this to buffered read in the future.
+	queueStateToParse := make([]byte, fileInfo.Size())
+	readSize, err := stateFile.Read(queueStateToParse)
+	
+	if err != nil {
+		logger.Fatalf("There was an error reading the queue state file %s (error is %s).", queueStateFilePath, err)
+	}
+	
+	logger.Debugf("Read %d bytes from the file %s.", readSize, queueStateFilePath)
+	
+	// Command out leaves a lone newline at the end, let's get rid of it.
+	queueStateToParse = bytes.TrimRight(queueStateToParse, "\n")
+	
+	// Let's divide the file to lines.
+	queueStateToParseLines := bytes.Split(queueStateToParse, []byte("\n"))
+	
+	// Next, we'll do a header check, and will continue parsing the file.
+	referenceHeader := "PARTITION|STATE|REASON"
+	
+	if string(bytes.TrimRight(queueStateToParseLines[0], "\n")) != referenceHeader {
+		logger.Fatalf("Header of the queue state file %s does not match expected header. File is not generated correctly.", queueStateFilePath)
+	}
+	
+	logger.Debugf("Header check is passed, discarding header.")
+	queueStateToParseLines = queueStateToParseLines[1:]
+	
+	// Let's start parsing the file.
+	// FIXME: Ignore lines if the partition not already present on the map.
+	for index, line := range queueStateToParseLines {
+		// Get the line, divide to fields.
+		lineFields := bytes.Split(line, []byte("|"))
+		logger.Debugf("Partition %s has a job at state %s with reason %s at line %d.", lineFields[0], lineFields[1], lineFields[2], index)
+
+		// We need the struct completely at hand, because we cannot mutate what's inside the map.
+		partitionToWorkOn := (*partitionsToUpdate)[string(lineFields[0])]
+		
+		switch string(lineFields[1]) {
+			case "RUNNING":
+				partitionToWorkOn.runningJobsCount++
+				logger.Debugf("Job at line %d is running.", index)
+
+			case "PENDING":
+				partitionToWorkOn.waitingJobsCount++
+				
+				if string(lineFields[2]) == "Resources" {
+					partitionToWorkOn.resourceWaitingJobsCount++
+					logger.Debugf("Job at line %d is pending for Resources.", index)
+				}
+		}
+		// We always add one for total jobs count.
+		partitionToWorkOn.totalJobsCount++
+		(*partitionsToUpdate)[string(lineFields[0])] = partitionToWorkOn
+	}
+}
+
+// This function prints 
+func presentInformation (partitionMap *map[string]Partition, logger *zap.SugaredLogger) {
+	
+	
+	for key, value := range *partitionMap {
+		logger.Debugf("Name of the partition is %s.", key)
+		logger.Debugf("Queue has %s free CPU(s).", value.idleProcessors)
+		logger.Debugf("Queue has %s total CPU(s).", value.totalProcessors)
+		logger.Debugf("Queue has total of %d waiting job(s).", value.waitingJobsCount)
+		logger.Debugf("Queue has total of %d waiting job(s) because of resources.", value.resourceWaitingJobsCount)
+		logger.Debugf("Queue has total of %s node(s).", value.totalNodes)
+		logger.Debugf("Queue has a time limit of %s per job.", value.maximumTimePerJob)
+		logger.Debugf("Queue requires minimum %s node(s) per job.", value.minimumNodesPerJob)
+		logger.Debugf("Queue requires maximum %s node(s) per job.", value.maximumNodesPerJob)
+		logger.Debugf("Nodes in this partition has %s core(s).", value.totalCoresPerNode)
+		logger.Debugf("Nodes in this partition has %d%s MB of RAM per core.", value.totalMemoryPerCore, value.totalMemoryPerCoreSuffix)
+	}
 }
 
 func main() {
@@ -273,5 +377,9 @@ func main() {
 	// Let's look what we have returned.
 	sugaredLogger.Debugf("Partition information returned as follows:\n%s", partitionInformation)
 
-	parsePartitionInformation(partitionInformation, sugaredLogger)
+	partitionsMap := parsePartitionInformation(partitionInformation, sugaredLogger)
+	
+	parseQueueState(&partitionsMap, "squeue.state", sugaredLogger)
+	
+	presentInformation(&partitionsMap, sugaredLogger)
 }

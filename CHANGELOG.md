@@ -2,6 +2,10 @@
 
 Global changelog file. Please use markdown formatting and write most recent changes on top. Dates use ISO formatting.
 
+## 20240115
+- feat: Implement squeue file parsing logic.
+- feat: Implement first version of presentation logic.
+
 ## 20240114
 - refactor: Change most of the `int` fields to `string` since we won't be processing them as numbers.
 - doc: Remove blank lines after dates since Markdown parses them fine.
