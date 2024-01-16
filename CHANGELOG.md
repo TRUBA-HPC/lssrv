@@ -2,6 +2,9 @@
 
 Global changelog file. Please use markdown formatting and write most recent changes on top. Dates use ISO formatting.
 
+## 20240116
+- refactor: Some small changes before implementing table view.
+
 ## 20240115
 - feat: Implement squeue file parsing logic.
 - feat: Implement first version of presentation logic.
