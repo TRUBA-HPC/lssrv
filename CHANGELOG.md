@@ -4,6 +4,7 @@ Global changelog file. Please use markdown formatting and write most recent chan
 
 ## 20240116
 - refactor: Some small changes before implementing table view.
+- refactor: A complete refactoring run for variable and function names.
 
 ## 20240115
 - feat: Implement squeue file parsing logic.

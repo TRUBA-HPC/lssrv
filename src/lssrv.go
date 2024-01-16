@@ -28,7 +28,7 @@ import (
 	"strconv"
 )
 
-// This is our basic data structure which holds everything about a SLURM partition
+// This is our basic data structure which holds everything about a SLURM partition.
 type Partition struct {
 	// Basic information for this partition.
 	name  string //Name of the partition
@@ -71,17 +71,16 @@ type Partition struct {
 	resourceWaitingJobsCount uint // Total number of jobs waiting because of resources.
 }
 
-// This function runs sinfo command with an hard coded argument list, because we need
-// an output with the format we specified.
-func getPartitions(logger *zap.SugaredLogger) []byte {
-	logger.Debugf("getPartitions reporting in.")
-	//TODO: Run sinfo here, get the output, store in an array line by line, and return.
-
+/*
+ * This function runs the sinfo command with a hard coded argument list.
+ * The output we want is well defined, so it can be parsed with ease.
+ */
+func getPartitionsInformation(logger *zap.SugaredLogger) []byte {
 	// Check whether we have the command in the OS, so we can continue safely.
 	path, err := exec.LookPath("sinfo")
 
+	// And exit gracefully if we don't have that.
 	if err != nil {
-		// And exit gracefully if we don't have that.
 		logger.Fatalf("Cannot find sinfo executable (error is %s), exiting.", err)
 		os.Exit(1)
 	}
@@ -93,29 +92,29 @@ func getPartitions(logger *zap.SugaredLogger) []byte {
 
 	// Let it run!
 	logger.Debugf("Will be running the command %s with args %s.", commandToRun.Path, commandToRun.Args)
-	partitionInformation, err := commandToRun.Output()
+	partitionsInformation, err := commandToRun.Output()
 
 	if err != nil {
-		logger.Fatalf("sinfo command returned an error (error is %s)", err)
+		logger.Fatalf("%s command returned an error (error is %s)", path, err)
 	}
 
 	// We have an extra line at the end of the output, let's trim this.
-	partitionInformation = bytes.TrimRight(partitionInformation, "\n")
+	partitionsInformation = bytes.TrimRight(partitionsInformation, "\n")
 
-	logger.Debugf("Got the partition information, returning.")
-	return partitionInformation
+	logger.Debugf("Got the partitions' information, returning.")
+	return partitionsInformation
 }
 
 /*
  * This function parses the partition information we got from sinfo command and returns us
  * the partition map we'll further process with waiting and total jobs data.
  */
-func parsePartitionInformation(partitionInformation []byte, logger *zap.SugaredLogger) map[string]Partition {
+func parsePartitionsInformation(partitionsInformation []byte, logger *zap.SugaredLogger) map[string]Partition {
 	// We'll start by dividing the partition information to lines.
-	partitionInformationLines := bytes.Split(partitionInformation, []byte("\n"))
+	partitionsInformationLines := bytes.Split(partitionsInformation, []byte("\n"))
 
 	// Let's see what we got.
-	logger.Debugf("Partition information has returned %d line(s).", len(partitionInformationLines))
+	logger.Debugf("Partition information has returned %d line(s).", len(partitionsInformationLines))
 
 	/*
 	 * The idea here is to compare the header with a known good value to check that
@@ -125,26 +124,25 @@ func parsePartitionInformation(partitionInformation []byte, logger *zap.SugaredL
 
 	referenceHeader := "PARTITION|AVAIL|NODES|MAX_CPUS_PER_NODE|CPUS|CPUS(A/I/O/T)|JOB_SIZE|S:C:T|TIMELIMIT|MEMORY"
 
-	if string(partitionInformationLines[0]) != referenceHeader {
-		logger.Errorf("Command output header doesn't match required template. This version of sinfo is not compatible, exiting.")
-		os.Exit(1)
+	if string(partitionsInformationLines[0]) != referenceHeader {
+		logger.Fatalf("Command output header doesn't match required template. This version of sinfo is not compatible, exiting.")
 	}
 
-	logger.Debugf("Header check is passed.")
+	logger.Debugf("Header check passed.")
 
 	// Discard the header since we don't need that anymore.
-	partitionInformationLines = partitionInformationLines[1:]
-	logger.Debugf("Partition information now has %d line(s).", len(partitionInformationLines))
+	partitionsInformationLines = partitionsInformationLines[1:]
+	logger.Debugf("Partition information now has %d line(s).", len(partitionsInformationLines))
 
 	// Create a map to hold the partitions, indexed by their name (hold that thought).
-	partitionMap := make(map[string]Partition)
+	partitionsMap := make(map[string]Partition)
 
 	// Start traversing the partitions we have.
-	for index, value := range partitionInformationLines {
-		logger.Debugf("Partition #%d is %s.", index, value)
+	for lineNumber, line := range partitionsInformationLines {
+		logger.Debugf("Partition #%d is %s.", lineNumber, line)
 
 		// And split them according to the divider we selected before.
-		partitionFields := bytes.Split(value, []byte("|"))
+		partitionFields := bytes.Split(line, []byte("|"))
 		// Always show your results to check them.
 		logger.Debugf("Partition line is splitted as %s.", partitionFields)
 
@@ -166,7 +164,7 @@ func parsePartitionInformation(partitionInformation []byte, logger *zap.SugaredL
 		partitionToParse.totalCoresPerNode = string(partitionFields[4])
 		logger.Debugf("Total core(s) per node is %s.", partitionToParse.totalCoresPerNode)
 
-		// Now we will parse the processor counts per queue. It's stored as "Allocated/Idle/Other/Total".
+		// Now we will parse the processor counts per partition. It's stored as "Allocated/Idle/Other/Total".
 		processorCounts := bytes.Split(partitionFields[5], []byte("/"))
 		partitionToParse.allocatedProcessors = string(processorCounts[0])
 		partitionToParse.idleProcessors = string(processorCounts[1])
@@ -175,9 +173,9 @@ func parsePartitionInformation(partitionInformation []byte, logger *zap.SugaredL
 		logger.Debugf("Processor counts for partition is %s/%s/%s/%s (Available/Idle/Other/Total).", partitionToParse.allocatedProcessors, partitionToParse.idleProcessors, partitionToParse.otherProcessors, partitionToParse.totalProcessors)
 
 		// Next we'll handle the node count limitations per job. Format is "minimum-maximum"
-		nodeCounts := bytes.Split(partitionFields[6], []byte("-"))
-		partitionToParse.minimumNodesPerJob = string(nodeCounts[0])
-		partitionToParse.maximumNodesPerJob = string(nodeCounts[1])
+		nodeLimits := bytes.Split(partitionFields[6], []byte("-"))
+		partitionToParse.minimumNodesPerJob = string(nodeLimits[0])
+		partitionToParse.maximumNodesPerJob = string(nodeLimits[1])
 		logger.Debugf("Node count limits for this partition is between %s and %s.", partitionToParse.minimumNodesPerJob, partitionToParse.maximumNodesPerJob)
 
 		// We have processor geometry per node, which again needs some processing. The format is "Sockets per node:Cores per socket:Threads per core".
@@ -205,12 +203,14 @@ func parsePartitionInformation(partitionInformation []byte, logger *zap.SugaredL
 		}
 
 		// This part is a bit involved. We need to divide some numbers to get an actual value.
+		// First, parse the number as a 64bit unsigned integer.
 		totalMemoryPerNode, err := strconv.ParseUint(string(memoryInformation[0]), 10, 64)
 
 		if err != nil {
 			logger.Fatalf("Cannot convert total memory amount to uint (error is %s).", err)
 		}
 
+		// Then do the same parsing for total core count for the node.
 		// We also need to handle the "+" suffix if the partition we're working on is heterogenous.
 		totalCoreCountPerNode, err := strconv.ParseUint(string(bytes.Split(partitionFields[4], []byte("+"))[0]), 10, 64)
 
@@ -218,22 +218,22 @@ func parsePartitionInformation(partitionInformation []byte, logger *zap.SugaredL
 			logger.Fatalf("Cannot convert total core count to uint (error is %s).", err)
 		}
 
+		// Lastly, do the division and store the number.
 		partitionToParse.totalMemoryPerCore = uint(totalMemoryPerNode) / uint(totalCoreCountPerNode)
 		logger.Debugf("This partition has %d%sMB of RAM per core.", partitionToParse.totalMemoryPerCore, partitionToParse.totalMemoryPerCoreSuffix)
 
 		// Add the completed partition to the map.
-		partitionMap[partitionToParse.name] = partitionToParse
+		partitionsMap[partitionToParse.name] = partitionToParse
 	}
-
-	return partitionMap
+	return partitionsMap
 }
 
 /*
- *Following function parses the queue state function and adds the information to the
+ * Following function parses the queue state function and adds the information to the
  * relevant partition. It basically parses the file line by line and counts the job
  * states.
  */
-func parseQueueState(partitionsToUpdate *map[string]Partition, queueStateFilePath string, logger *zap.SugaredLogger) {
+func parseQueueStateFile(partitionsToUpdate *map[string]Partition, queueStateFilePath string, logger *zap.SugaredLogger) {
 	// As a good, defensive programmer, we need to make sure that the file is there and we can read it before trying to parse it.
 	fileInfo, err := os.Stat(queueStateFilePath)
 
@@ -259,18 +259,18 @@ func parseQueueState(partitionsToUpdate *map[string]Partition, queueStateFilePat
 	}
 
 	// Read the file into the memory.
-	// I'll be doing a complete read into memory, since the file is >50KB, and I don't have time to optimize this.
+	// I'll be doing a complete read into memory, since the file is <50KB, and I don't have time to optimize this.
 	// TODO: Convert this to buffered read in the future.
 	queueStateToParse := make([]byte, fileInfo.Size())
-	readSize, err := stateFile.Read(queueStateToParse)
+	bytesRead, err := stateFile.Read(queueStateToParse)
 
 	if err != nil {
 		logger.Fatalf("There was an error reading the queue state file %s (error is %s).", queueStateFilePath, err)
 	}
 
-	logger.Debugf("Read %d bytes from the file %s.", readSize, queueStateFilePath)
+	logger.Debugf("Read %d byte(s) from the file %s.", bytesRead, queueStateFilePath)
 
-	// Command out leaves a lone newline at the end, let's get rid of it.
+	// Command leaves a lone newline at the end, let's clean it.
 	queueStateToParse = bytes.TrimRight(queueStateToParse, "\n")
 
 	// Let's divide the file to lines.
@@ -283,7 +283,7 @@ func parseQueueState(partitionsToUpdate *map[string]Partition, queueStateFilePat
 		logger.Fatalf("Header of the queue state file %s does not match expected header. File is not generated correctly.", queueStateFilePath)
 	}
 
-	logger.Debugf("Header check is passed, discarding header.")
+	logger.Debugf("Header check passed, discarding header.")
 	queueStateToParseLines = queueStateToParseLines[1:]
 
 	// Let's start parsing the file.
@@ -293,48 +293,55 @@ func parseQueueState(partitionsToUpdate *map[string]Partition, queueStateFilePat
 	 * The idea is to only update the information of the partitions we already have,
 	 * and not add any partitions to the list which user can't submit.
 	 */
-
 	availablePartitions := make([]string, 0, len(*partitionsToUpdate))
 
 	for key := range *partitionsToUpdate {
 		availablePartitions = append(availablePartitions, key)
 	}
 
-	for index, line := range queueStateToParseLines {
+	for lineNumber, line := range queueStateToParseLines {
 		// Get the line, divide to fields.
 		lineFields := bytes.Split(line, []byte("|"))
 		if slices.Contains(availablePartitions, string(lineFields[0])) {
-			logger.Debugf("Partition %s has a job at state %s with reason %s at line %d.", lineFields[0], lineFields[1], lineFields[2], index)
+			logger.Debugf("Partition %s has a job at state %s with reason %s at line %d.", lineFields[0], lineFields[1], lineFields[2], lineNumber)
 
 			// We need the struct completely at hand, because we cannot mutate what's inside the map.
+			// Copying is bad, but Go requires us to do it.
 			partitionToWorkOn := (*partitionsToUpdate)[string(lineFields[0])]
 
 			switch string(lineFields[1]) {
 			case "RUNNING":
+				// Update the running jobs' count.
 				partitionToWorkOn.runningJobsCount++
-				logger.Debugf("Job at line %d is running.", index)
+				logger.Debugf("Job at line %d is running.", lineNumber)
 
 			case "PENDING":
+				// Update the total waiting count in any case.
 				partitionToWorkOn.waitingJobsCount++
 
+				// Also update "waiting for resources" count, if that's the reason.
 				if string(lineFields[2]) == "Resources" {
 					partitionToWorkOn.resourceWaitingJobsCount++
-					logger.Debugf("Job at line %d is pending for Resources.", index)
+					logger.Debugf("Job at line %d is pending for Resources.", lineNumber)
 				}
 			}
 			// We always add one for total jobs count.
 			partitionToWorkOn.totalJobsCount++
+			
+			// Copy the partition data back before leaving.
 			(*partitionsToUpdate)[string(lineFields[0])] = partitionToWorkOn
 		} else {
+			// Skip the line if the line doesn't belong to one of the partitions we already have.
 			logger.Debugf("Partition %s is not available in user's accessible partitions list.", lineFields[0])
 		}
 	}
 }
 
 // This function prints
-func presentInformation(partitionMap *map[string]Partition, logger *zap.SugaredLogger) {
+func presentInformation(partitionsMap *map[string]Partition, logger *zap.SugaredLogger) {
 
-	for key, value := range *partitionMap {
+	// Just print what we have for inspection.
+	for key, value := range *partitionsMap {
 		logger.Debugf("Name of the partition is %s.", key)
 		logger.Debugf("Queue has %s free CPU(s).", value.idleProcessors)
 		logger.Debugf("Queue has %s total CPU(s).", value.totalProcessors)
@@ -389,11 +396,13 @@ func main() {
 	sugaredLogger.Infof("Hello, world!")
 
 	// Start by getting the partitions & the raw information via sinfo.
-	partitionInformation := getPartitions(sugaredLogger)
+	partitionInformation := getPartitionsInformation(sugaredLogger)
 
 	// Let's look what we have returned.
 	sugaredLogger.Debugf("Partition information returned as follows:\n%s", partitionInformation)
-	partitionsMap := parsePartitionInformation(partitionInformation, sugaredLogger)
-	parseQueueState(&partitionsMap, "squeue.state", sugaredLogger)
+	
+	// Let's get the data that we need.
+	partitionsMap := parsePartitionsInformation(partitionInformation, sugaredLogger)
+	parseQueueStateFile(&partitionsMap, "squeue.state", sugaredLogger)
 	presentInformation(&partitionsMap, sugaredLogger)
 }
