@@ -26,7 +26,57 @@ import (
 	"os/exec"
 	"slices"
 	"strconv"
+	"time"
+	
+	"github.com/charmbracelet/bubbles/table"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+// This is required while building our table.
+type TableModel struct {
+	table table.Model
+}
+
+// Since we're not doing anything before initializing our table, this function returns nil.
+func (tableModel TableModel) Init() tea.Cmd { return tick }
+
+// This function handles what happens when we press a key, or the model receives a message.
+func (tableModel TableModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	
+	switch msg := msg.(type) {
+	case tickMsg:
+		return tableModel, tea.Quit
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			return tableModel, tea.Quit
+		}
+	}
+	tableModel.table, cmd = tableModel.table.Update(msg)
+	return tableModel, cmd
+}
+
+// This function is what renders our initial table. 
+func (tableModel TableModel) View() string {
+	return baseStyle.Render(tableModel.table.View()) + "\n"
+}
+
+// This is our base style (think it as a filter), which we use to render our table.
+var baseStyle = lipgloss.NewStyle().
+	BorderStyle(lipgloss.NormalBorder()).
+	BorderForeground(lipgloss.Color("240"))
+
+// Messages are events that we respond to in our Update function. This
+// particular one indicates that the timer has ticked.
+type tickMsg time.Time
+
+// This function runs during table generation, and queues a message to BubbleTea.
+// This tick will cause application to exit.
+func tick() tea.Msg {
+	return tickMsg{}
+}
 
 // This is our basic data structure which holds everything about a SLURM partition.
 type Partition struct {
@@ -327,7 +377,7 @@ func parseQueueStateFile(partitionsToUpdate *map[string]Partition, queueStateFil
 			}
 			// We always add one for total jobs count.
 			partitionToWorkOn.totalJobsCount++
-			
+
 			// Copy the partition data back before leaving.
 			(*partitionsToUpdate)[string(lineFields[0])] = partitionToWorkOn
 		} else {
@@ -362,7 +412,7 @@ func main() {
 	// doesn't support reconfiguration. For a completely reconfigurable variant,
 	// there's Thales' flume (https://github.com/ThalesGroup/flume)
 	zapDefaultConfigJSON := []byte(`{
-	  "level": "debug",
+	  "level": "fatal",
 	  "encoding": "console",
 	  "outputPaths": ["stdout"],
 	  "errorOutputPaths": ["stderr"],
@@ -400,9 +450,71 @@ func main() {
 
 	// Let's look what we have returned.
 	sugaredLogger.Debugf("Partition information returned as follows:\n%s", partitionInformation)
-	
+
 	// Let's get the data that we need.
 	partitionsMap := parsePartitionsInformation(partitionInformation, sugaredLogger)
 	parseQueueStateFile(&partitionsMap, "squeue.state", sugaredLogger)
-	presentInformation(&partitionsMap, sugaredLogger)
+	// presentInformation(&partitionsMap, sugaredLogger)
+
+	// Bubble Tea is integrated after that point.
+	// We start by creating our table columns.
+	columns := []table.Column{
+		{Title: "Partition Name", Width: 11},
+		{Title: "CPUs (Free)", Width: 11},
+		{Title: "CPUs (Total)", Width: 12},
+		{Title: "Wait. Jobs (Resources)", Width: 10},
+		{Title: "Wait. Jobs (Total)", Width: 10},
+		{Title: "Nodes (Total)", Width: 10},
+		{Title: "Max. Job Time (D-HH:MM:SS)", Width: 10},
+		{Title: "Min. Node per Job", Width: 10},
+		{Title: "Max. Node per Job", Width: 10},
+		{Title: "Cores per Node", Width: 10},
+		{Title: "RAM per Core", Width: 10},
+	}
+
+	// Next we have "make" the rows, in the correct number. We'll fill these next.
+	rows := make([]table.Row, len(partitionsMap))
+
+	// Populate the rows.
+	i := 0 // This is necessary since partitionsMap is a map, and not indexed with integers, but rows are indexed with integers
+	for _, partition := range partitionsMap {
+		// This is where we create the row and put to the appropriate row.
+		rows[i] = table.Row{partition.name, partition.idleProcessors,
+			partition.totalProcessors, strconv.FormatUint(uint64(partition.resourceWaitingJobsCount), 10),
+			strconv.FormatUint(uint64(partition.waitingJobsCount), 10), partition.totalNodes,
+			partition.maximumTimePerJob, partition.minimumNodesPerJob,
+			partition.maximumNodesPerJob, partition.totalCoresPerNode,
+			strconv.FormatUint(uint64(partition.totalMemoryPerCore), 10)}
+
+		i++ // Don't forget to implement your index.
+	}
+
+	// Create a table object with the data we have.
+	partitionsTable := table.New(table.WithColumns(columns), table.WithRows(rows), table.WithFocused(true), table.WithHeight(len(rows)))
+
+	// Get a default table style from table type.
+	tableStyle := table.DefaultStyles()
+
+	// Set header style.
+	tableStyle.Header = tableStyle.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		BorderBottom(true).
+		Bold(true).Height(2).Foreground(lipgloss.Color("1"))
+
+	// Set selected row's style.
+	tableStyle.Selected = tableStyle.Selected.
+		Foreground(lipgloss.NoColor{}).
+		Bold(false)
+
+	// Apply the style to the table.
+	partitionsTable.SetStyles(tableStyle)
+
+	// Create a table model with our partititions table.
+	tableModel := TableModel{partitionsTable}
+
+	// And fire the application.
+	if _, err := tea.NewProgram(tableModel).Run(); err != nil {
+		sugaredLogger.Fatalf("Error running program (error is %s).", err)
+	}
 }

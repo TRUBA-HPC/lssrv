@@ -2,6 +2,12 @@
 
 Global changelog file. Please use markdown formatting and write most recent changes on top. Dates use ISO formatting.
 
+## 20240120
+- feat: Start to integrate `bubbletea` TUI library.
+- feat: Implemented a simple table view.
+- feat: Made the program exit immediately after running.
+- Refactor: Fine tune table colors.
+
 ## 20240116
 - refactor: Some small changes before implementing table view.
 - refactor: A complete refactoring run for variable and function names.
