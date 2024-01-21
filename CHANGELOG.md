@@ -2,6 +2,11 @@
 
 Global changelog file. Please use markdown formatting and write most recent changes on top. Dates use ISO formatting.
 
+## 20240121
+- refactor: Organize code to improve readability.
+- refactor: Fix some debug messages' terminology.
+- refactor: Change state file location for production.
+
 ## 20240120
 - feat: Start to integrate `bubbletea` TUI library.
 - feat: Implemented a simple table view.

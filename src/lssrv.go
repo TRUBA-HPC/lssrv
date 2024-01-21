@@ -33,50 +33,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// This is required while building our table.
-type TableModel struct {
-	table table.Model
-}
-
-// Since we're not doing anything before initializing our table, this function returns nil.
-func (tableModel TableModel) Init() tea.Cmd { return tick }
-
-// This function handles what happens when we press a key, or the model receives a message.
-func (tableModel TableModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	
-	switch msg := msg.(type) {
-	case tickMsg:
-		return tableModel, tea.Quit
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return tableModel, tea.Quit
-		}
-	}
-	tableModel.table, cmd = tableModel.table.Update(msg)
-	return tableModel, cmd
-}
-
-// This function is what renders our initial table. 
-func (tableModel TableModel) View() string {
-	return baseStyle.Render(tableModel.table.View()) + "\n"
-}
-
 // This is our base style (think it as a filter), which we use to render our table.
 var baseStyle = lipgloss.NewStyle().
 	BorderStyle(lipgloss.NormalBorder()).
 	BorderForeground(lipgloss.Color("240"))
 
+// This is required while building our table.
+type TableModel struct {
+	table table.Model
+}
+
 // Messages are events that we respond to in our Update function. This
 // particular one indicates that the timer has ticked.
 type tickMsg time.Time
-
-// This function runs during table generation, and queues a message to BubbleTea.
-// This tick will cause application to exit.
-func tick() tea.Msg {
-	return tickMsg{}
-}
 
 // This is our basic data structure which holds everything about a SLURM partition.
 type Partition struct {
@@ -119,6 +88,39 @@ type Partition struct {
 	runningJobsCount         uint // Number of running jobs on this partition.
 	waitingJobsCount         uint // Number of waiting jobs on this partition. Doesn't contain resource waiting jobs.
 	resourceWaitingJobsCount uint // Total number of jobs waiting because of resources.
+}
+
+// This function runs during table generation, and queues a message to BubbleTea.
+// This tick will cause application to exit.
+func tick() tea.Msg {
+	return tickMsg{}
+}
+
+// Since we're not doing anything before initializing our table, this function returns nil.
+func (tableModel TableModel) Init() tea.Cmd {
+	return tick
+}
+
+// This function is what renders our initial table. 
+func (tableModel TableModel) View() string {
+	return baseStyle.Render(tableModel.table.View()) + "\n"
+}
+
+// This function handles what happens when we press a key, or the model receives a message.
+func (tableModel TableModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	
+	switch msg := msg.(type) {
+	case tickMsg:
+		return tableModel, tea.Quit
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			return tableModel, tea.Quit
+		}
+	}
+	tableModel.table, cmd = tableModel.table.Update(msg)
+	return tableModel, cmd
 }
 
 /*
@@ -393,13 +395,13 @@ func presentInformation(partitionsMap *map[string]Partition, logger *zap.Sugared
 	// Just print what we have for inspection.
 	for key, value := range *partitionsMap {
 		logger.Debugf("Name of the partition is %s.", key)
-		logger.Debugf("Queue has %s free CPU(s).", value.idleProcessors)
-		logger.Debugf("Queue has %s total CPU(s).", value.totalProcessors)
-		logger.Debugf("Queue has total of %d waiting job(s).", value.waitingJobsCount)
-		logger.Debugf("Queue has total of %d waiting job(s) because of resources.", value.resourceWaitingJobsCount)
-		logger.Debugf("Queue has total of %s node(s).", value.totalNodes)
-		logger.Debugf("Queue has a time limit of %s per job.", value.maximumTimePerJob)
-		logger.Debugf("Queue requires minimum %s node(s) per job.", value.minimumNodesPerJob)
+		logger.Debugf("Partition has %s free CPU(s).", value.idleProcessors)
+		logger.Debugf("Partition has %s total CPU(s).", value.totalProcessors)
+		logger.Debugf("Partition has total of %d waiting job(s).", value.waitingJobsCount)
+		logger.Debugf("Partition has total of %d waiting job(s) because of resources.", value.resourceWaitingJobsCount)
+		logger.Debugf("Partition has total of %s node(s).", value.totalNodes)
+		logger.Debugf("Partition has a time limit of %s per job.", value.maximumTimePerJob)
+		logger.Debugf("Partition requires minimum %s node(s) per job.", value.minimumNodesPerJob)
 		logger.Debugf("Queue requires maximum %s node(s) per job.", value.maximumNodesPerJob)
 		logger.Debugf("Nodes in this partition has %s core(s).", value.totalCoresPerNode)
 		logger.Debugf("Nodes in this partition has %d%s MB of RAM per core.", value.totalMemoryPerCore, value.totalMemoryPerCoreSuffix)
@@ -443,8 +445,6 @@ func main() {
 	sugaredLogger := logger.Sugar()
 	sugaredLogger.Debugf("Logger is up.")
 
-	sugaredLogger.Infof("Hello, world!")
-
 	// Start by getting the partitions & the raw information via sinfo.
 	partitionInformation := getPartitionsInformation(sugaredLogger)
 
@@ -453,7 +453,7 @@ func main() {
 
 	// Let's get the data that we need.
 	partitionsMap := parsePartitionsInformation(partitionInformation, sugaredLogger)
-	parseQueueStateFile(&partitionsMap, "squeue.state", sugaredLogger)
+	parseQueueStateFile(&partitionsMap, "/var/cache/lssrv/squeue.state", sugaredLogger)
 	// presentInformation(&partitionsMap, sugaredLogger)
 
 	// Bubble Tea is integrated after that point.
