@@ -3,6 +3,8 @@
 Global changelog file. Please use markdown formatting and write most recent changes on top. Dates use ISO formatting.
 
 ## 20240121
+- refactor: Remove Python codebase.
+- refactor: Update `cron.d/lssrv_helper` to be compatible with the Go version.
 - refactor: Add code comments.
 - feat: Carry information about queue state file, so we can show last update date. 
 - proj: Initial version is done.
