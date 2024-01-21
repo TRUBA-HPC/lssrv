@@ -28,24 +28,8 @@ import (
 	"strconv"
 	"time"
 	
-	"github.com/charmbracelet/bubbles/table"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+    "github.com/jedib0t/go-pretty/v6/table"
 )
-
-// This is our base style (think it as a filter), which we use to render our table.
-var baseStyle = lipgloss.NewStyle().
-	BorderStyle(lipgloss.NormalBorder()).
-	BorderForeground(lipgloss.Color("240"))
-
-// This is required while building our table.
-type TableModel struct {
-	table table.Model
-}
-
-// Messages are events that we respond to in our Update function. This
-// particular one indicates that the timer has ticked.
-type tickMsg time.Time
 
 // This is our basic data structure which holds everything about a SLURM partition.
 type Partition struct {
@@ -88,39 +72,6 @@ type Partition struct {
 	runningJobsCount         uint // Number of running jobs on this partition.
 	waitingJobsCount         uint // Number of waiting jobs on this partition. Doesn't contain resource waiting jobs.
 	resourceWaitingJobsCount uint // Total number of jobs waiting because of resources.
-}
-
-// This function runs during table generation, and queues a message to BubbleTea.
-// This tick will cause application to exit.
-func tick() tea.Msg {
-	return tickMsg{}
-}
-
-// Since we're not doing anything before initializing our table, this function returns nil.
-func (tableModel TableModel) Init() tea.Cmd {
-	return tick
-}
-
-// This function is what renders our initial table. 
-func (tableModel TableModel) View() string {
-	return baseStyle.Render(tableModel.table.View()) + "\n"
-}
-
-// This function handles what happens when we press a key, or the model receives a message.
-func (tableModel TableModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	
-	switch msg := msg.(type) {
-	case tickMsg:
-		return tableModel, tea.Quit
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return tableModel, tea.Quit
-		}
-	}
-	tableModel.table, cmd = tableModel.table.Update(msg)
-	return tableModel, cmd
 }
 
 /*
@@ -285,7 +236,7 @@ func parsePartitionsInformation(partitionsInformation []byte, logger *zap.Sugare
  * relevant partition. It basically parses the file line by line and counts the job
  * states.
  */
-func parseQueueStateFile(partitionsToUpdate *map[string]Partition, queueStateFilePath string, logger *zap.SugaredLogger) {
+func parseQueueStateFile(partitionsToUpdate *map[string]Partition, queueStateFilePath string, logger *zap.SugaredLogger) os.FileInfo {
 	// As a good, defensive programmer, we need to make sure that the file is there and we can read it before trying to parse it.
 	fileInfo, err := os.Stat(queueStateFilePath)
 
@@ -387,10 +338,12 @@ func parseQueueStateFile(partitionsToUpdate *map[string]Partition, queueStateFil
 			logger.Debugf("Partition %s is not available in user's accessible partitions list.", lineFields[0])
 		}
 	}
+	
+	return fileInfo
 }
 
 // This function prints
-func presentInformation(partitionsMap *map[string]Partition, logger *zap.SugaredLogger) {
+func presentInformation(partitionsMap *map[string]Partition, queueStateFileInfo *os.FileInfo, logger *zap.SugaredLogger) {
 
 	// Just print what we have for inspection.
 	for key, value := range *partitionsMap {
@@ -407,6 +360,35 @@ func presentInformation(partitionsMap *map[string]Partition, logger *zap.Sugared
 		logger.Debugf("Nodes in this partition has %d%s MB of RAM per core.", value.totalMemoryPerCore, value.totalMemoryPerCoreSuffix)
 	}
 
+	// Start by creating a Table writer and settings it output target.
+	// We have a table object after that point.
+	partitionStateTable := table.NewWriter()
+	partitionStateTable.SetOutputMirror(os.Stdout)
+	
+	// Give our table a nice title.
+	partitionStateTable.SetTitle("TRUBA Paritions State")
+	
+	// And define our column names. This library can wrap the column names the way we want.
+	partitionStateTable.AppendHeader(table.Row{"Partition\nName", "CPUs\n(Free)", "CPUs\n(Total)", "Wait. Jobs\n(Resources)", "Wait. Jobs\n(Total)", "Nodes\n(Total)", "Max. Job Time\n(D-HH:MM:SS)", "Min. Nodes\nper Job", "Max. Nodes\nper Job", "Core\nper Node", "RAM (MB)\nper Core"})
+
+	// Then add the rows with the data we have. 
+	for _, details := range *partitionsMap {
+		partitionStateTable.AppendRow(table.Row{details.name, details.idleProcessors, details.totalProcessors, details.resourceWaitingJobsCount, details.waitingJobsCount, details.totalNodes, details.maximumTimePerJob, details.minimumNodesPerJob, details.maximumNodesPerJob, details.totalCoresPerNode, details.totalMemoryPerCore})
+	}
+	
+	// Sort the table before according to partition names.
+	partitionStateTable.SortBy([]table.SortBy{
+	    {Name: "Partition\nName", Mode: table.Asc},
+    })
+    
+    // Add a footer with the last update date.
+	partitionStateTable.AppendFooter(table.Row{"Last update:", (*queueStateFileInfo).ModTime().Format(time.RFC822)})
+    
+    // Let us look fancier:
+    partitionStateTable.SetStyle(table.StyleColoredYellowWhiteOnBlack)
+    
+    // Let there be light!
+	partitionStateTable.Render()
 }
 
 func main() {
@@ -453,68 +435,6 @@ func main() {
 
 	// Let's get the data that we need.
 	partitionsMap := parsePartitionsInformation(partitionInformation, sugaredLogger)
-	parseQueueStateFile(&partitionsMap, "/var/cache/lssrv/squeue.state", sugaredLogger)
-	// presentInformation(&partitionsMap, sugaredLogger)
-
-	// Bubble Tea is integrated after that point.
-	// We start by creating our table columns.
-	columns := []table.Column{
-		{Title: "Partition Name", Width: 11},
-		{Title: "CPUs (Free)", Width: 11},
-		{Title: "CPUs (Total)", Width: 12},
-		{Title: "Wait. Jobs (Resources)", Width: 10},
-		{Title: "Wait. Jobs (Total)", Width: 10},
-		{Title: "Nodes (Total)", Width: 10},
-		{Title: "Max. Job Time (D-HH:MM:SS)", Width: 10},
-		{Title: "Min. Node per Job", Width: 10},
-		{Title: "Max. Node per Job", Width: 10},
-		{Title: "Cores per Node", Width: 10},
-		{Title: "RAM per Core", Width: 10},
-	}
-
-	// Next we have "make" the rows, in the correct number. We'll fill these next.
-	rows := make([]table.Row, len(partitionsMap))
-
-	// Populate the rows.
-	i := 0 // This is necessary since partitionsMap is a map, and not indexed with integers, but rows are indexed with integers
-	for _, partition := range partitionsMap {
-		// This is where we create the row and put to the appropriate row.
-		rows[i] = table.Row{partition.name, partition.idleProcessors,
-			partition.totalProcessors, strconv.FormatUint(uint64(partition.resourceWaitingJobsCount), 10),
-			strconv.FormatUint(uint64(partition.waitingJobsCount), 10), partition.totalNodes,
-			partition.maximumTimePerJob, partition.minimumNodesPerJob,
-			partition.maximumNodesPerJob, partition.totalCoresPerNode,
-			strconv.FormatUint(uint64(partition.totalMemoryPerCore), 10)}
-
-		i++ // Don't forget to implement your index.
-	}
-
-	// Create a table object with the data we have.
-	partitionsTable := table.New(table.WithColumns(columns), table.WithRows(rows), table.WithFocused(true), table.WithHeight(len(rows)))
-
-	// Get a default table style from table type.
-	tableStyle := table.DefaultStyles()
-
-	// Set header style.
-	tableStyle.Header = tableStyle.Header.
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		BorderBottom(true).
-		Bold(true).Height(2).Foreground(lipgloss.Color("1"))
-
-	// Set selected row's style.
-	tableStyle.Selected = tableStyle.Selected.
-		Foreground(lipgloss.NoColor{}).
-		Bold(false)
-
-	// Apply the style to the table.
-	partitionsTable.SetStyles(tableStyle)
-
-	// Create a table model with our partititions table.
-	tableModel := TableModel{partitionsTable}
-
-	// And fire the application.
-	if _, err := tea.NewProgram(tableModel).Run(); err != nil {
-		sugaredLogger.Fatalf("Error running program (error is %s).", err)
-	}
+	queueStateFileInfo := parseQueueStateFile(&partitionsMap, "/var/cache/lssrv/squeue.state", sugaredLogger)
+	presentInformation(&partitionsMap, &queueStateFileInfo, sugaredLogger)
 }

@@ -3,6 +3,10 @@
 Global changelog file. Please use markdown formatting and write most recent changes on top. Dates use ISO formatting.
 
 ## 20240121
+- refactor: Add code comments.
+- feat: Carry information about queue state file, so we can show last update date. 
+- proj: Initial version is done.
+- refactor: Replace BubbleTea with go-pretty's table module.
 - refactor: Organize code to improve readability.
 - refactor: Fix some debug messages' terminology.
 - refactor: Change state file location for production.
