@@ -1,5 +1,5 @@
 /*
- * List free servers
+ * List free servers - Show state of partitions managed by slurm.
  * Copyright (C) 2024  Hakan Bayindir
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,15 +21,31 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
+	"fmt"
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"os"
 	"os/exec"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
-	
-    "github.com/jedib0t/go-pretty/v6/table"
 )
+
+/*
+ * This structure stores all of our runtime configuration which will be used during the
+ * run. It'll be initialized with the default values first, and if we have a config file,
+ * that config file will override these options.
+ */
+type RuntimeConfiguration struct {
+	configurationFilePath string   // Full path of the configuration file in use.
+	tableTitle            string   // The string shown in the title of the table.
+	ignoredPartitions     []string // List of partitions that won't be shown on the table.
+	queueStateFilePath    string   // Full path of the state queue file.
+	softwareVersion       string   // Version of our software.
+}
 
 // This is our basic data structure which holds everything about a SLURM partition.
 type Partition struct {
@@ -72,6 +88,90 @@ type Partition struct {
 	runningJobsCount         uint // Number of running jobs on this partition.
 	waitingJobsCount         uint // Number of waiting jobs on this partition. Doesn't contain resource waiting jobs.
 	resourceWaitingJobsCount uint // Total number of jobs waiting because of resources.
+}
+
+/*
+ * This function fills our data structure with the initial values, so the software can
+ * run without any configuration file, if necessary.
+ */
+func initializeDefeaultValues(runtimeConfiguration *RuntimeConfiguration, logger *zap.SugaredLogger) {
+	// Won't be touching configurationFilePath and ignoredPartitions, because they are empty by default.
+
+	// Use a generic name, so the software stays reusable.
+	runtimeConfiguration.tableTitle = "Slurm partitions state"
+	logger.Debugf("Table title is set to %s.", runtimeConfiguration.tableTitle)
+
+	// We expect this to be installed system-wide.
+	runtimeConfiguration.queueStateFilePath = "/var/cache/lssrv/queue.state"
+	logger.Debugf("Queue state file path is %s.", runtimeConfiguration.queueStateFilePath)
+
+	// Lastly, set the version.
+	runtimeConfiguration.softwareVersion = "2.0.0"
+	logger.Debugf("Software internal version is %s.", runtimeConfiguration.softwareVersion)
+}
+
+/*
+ * This function finds the configuration file (if there's one), parses it and applies the
+ * configuration to our runtime configuration. The system-wide paths are specially
+ * prioritized because this tool is designed to be a system-wide one.
+ */
+func readAndApplyConfiguration(runtimeConfiguration *RuntimeConfiguration, logger *zap.SugaredLogger) {
+	// Let's define the nature of our configuration file.
+	viper.SetConfigName("lssrv.conf")
+	viper.SetConfigType("toml")
+
+	// We need user's config directory to add some neat magic.
+	userConfigDirectory, err := os.UserConfigDir()
+
+	if err != nil {
+		logger.Panicf("Error getting user's config directory, exiting (error is %s).", err)
+	}
+
+	workingDirectory, err := os.Getwd()
+	logger.Debugf("Current directory is %s", workingDirectory)
+
+	if err != nil {
+		logger.Panicf("Error getting working directory, exiting (error is %s).", err)
+	}
+
+	// The logic is to allow user to override local config with a test config.
+	// And to override system-wide config with a local config.
+	viper.AddConfigPath("/etc")              // A system-wide config should be present.
+	viper.AddConfigPath(userConfigDirectory) // User might create a user-wide config for testing.
+	viper.AddConfigPath(workingDirectory)    // This is a last resort and another test directory.
+
+	err = viper.ReadInConfig() // Find and read the config file
+
+	// Handle errors reading the config file.
+	// Do not create warnings here, all config warnings are handled by checkConfigurationSanity() function.
+	if err != nil {
+		logger.Debugf("Cannot find any configuration file, continuing using built-in defaults (%s).", err)
+	} else {
+		// If we've reached here, we can take note of the file path now.
+		// This also means that we have read the config file successfully.
+		runtimeConfiguration.configurationFilePath = viper.ConfigFileUsed()
+
+		// Let the user know where the config file is.
+		logger.Debugf("Configuration file is found at %s.", runtimeConfiguration.configurationFilePath)
+
+		// Check options one by one whether they're set and apply present options.
+		// We do not panic if anything mandatory is missing, but we'll warn the user politely.
+		// Below is the pushover section.
+		if viper.IsSet("general.table_title") {
+			runtimeConfiguration.tableTitle = viper.GetString("general.table_title")
+			logger.Debugf("Table title is found & set to %s.", runtimeConfiguration.tableTitle)
+		}
+
+		if viper.IsSet("general.ignored_partitions") {
+			runtimeConfiguration.ignoredPartitions = viper.GetStringSlice("general.ignored_partitions")
+			logger.Debugf("%d ignored partition(s) found & set to %s.", len(runtimeConfiguration.ignoredPartitions), runtimeConfiguration.ignoredPartitions)
+		}
+
+		if viper.IsSet("general.queue_state_file_path") {
+			runtimeConfiguration.queueStateFilePath = viper.GetString("general.queue_state_file_path")
+			logger.Debugf("Queue state file path is found & set to %s.", runtimeConfiguration.queueStateFilePath)
+		}
+	}
 }
 
 /*
@@ -236,12 +336,12 @@ func parsePartitionsInformation(partitionsInformation []byte, logger *zap.Sugare
  * relevant partition. It basically parses the file line by line and counts the job
  * states.
  */
-func parseQueueStateFile(partitionsToUpdate *map[string]Partition, queueStateFilePath string, logger *zap.SugaredLogger) os.FileInfo {
+func parseQueueStateFile(runtimeConfig *RuntimeConfiguration, partitionsToUpdate *map[string]Partition, logger *zap.SugaredLogger) os.FileInfo {
 	// As a good, defensive programmer, we need to make sure that the file is there and we can read it before trying to parse it.
-	fileInfo, err := os.Stat(queueStateFilePath)
+	fileInfo, err := os.Stat(runtimeConfig.queueStateFilePath)
 
 	if err != nil {
-		logger.Fatalf("Cannot stat queue state file %s (error is %s).", queueStateFilePath, err)
+		logger.Fatalf("Cannot stat queue state file %s (error is %s).", runtimeConfig.queueStateFilePath, err)
 	}
 
 	// Let's print what we have found so far.
@@ -253,12 +353,13 @@ func parseQueueStateFile(partitionsToUpdate *map[string]Partition, queueStateFil
 
 	// If we're here, it means we're good so far. Let's open the file in read-only mode.
 	// Open is a shorthand for opening a file in read-only mode.
-	stateFile, err := os.Open(queueStateFilePath)
+	stateFile, err := os.Open(runtimeConfig.queueStateFilePath)
 	defer stateFile.Close() // Do not forget to close the file when the function ends.
 
 	// Be vigilant!
 	if err != nil {
-		logger.Fatalf("There was an error while opening queue state file %s (error is %s).", queueStateFilePath, err)
+		// TODO: Update the error message with a friendlier, more useful one.
+		logger.Fatalf("There was an error while opening queue state file %s (error is %s).", runtimeConfig.queueStateFilePath, err)
 	}
 
 	// Read the file into the memory.
@@ -268,10 +369,10 @@ func parseQueueStateFile(partitionsToUpdate *map[string]Partition, queueStateFil
 	bytesRead, err := stateFile.Read(queueStateToParse)
 
 	if err != nil {
-		logger.Fatalf("There was an error reading the queue state file %s (error is %s).", queueStateFilePath, err)
+		logger.Fatalf("There was an error reading the queue state file %s (error is %s).", runtimeConfig.queueStateFilePath, err)
 	}
 
-	logger.Debugf("Read %d byte(s) from the file %s.", bytesRead, queueStateFilePath)
+	logger.Debugf("Read %d byte(s) from the file %s.", bytesRead, runtimeConfig.queueStateFilePath)
 
 	// Command leaves a lone newline at the end, let's clean it.
 	queueStateToParse = bytes.TrimRight(queueStateToParse, "\n")
@@ -283,7 +384,7 @@ func parseQueueStateFile(partitionsToUpdate *map[string]Partition, queueStateFil
 	referenceHeader := "PARTITION|STATE|REASON"
 
 	if string(bytes.TrimRight(queueStateToParseLines[0], "\n")) != referenceHeader {
-		logger.Fatalf("Header of the queue state file %s does not match expected header. File is not generated correctly.", queueStateFilePath)
+		logger.Fatalf("Header of the queue state file %s does not match expected header. File is not generated correctly.", runtimeConfig.queueStateFilePath)
 	}
 
 	logger.Debugf("Header check passed, discarding header.")
@@ -338,12 +439,24 @@ func parseQueueStateFile(partitionsToUpdate *map[string]Partition, queueStateFil
 			logger.Debugf("Partition %s is not available in user's accessible partitions list.", lineFields[0])
 		}
 	}
-	
+
 	return fileInfo
 }
 
+/*
+ * This function removes the ignored partitions from the map to prevent them from appearing.
+ * Doing this is much more efficient than checking them one by one since we directly remove the
+ * key without iterating the whole map.
+ */
+func removeIgnoredQueues(runtimeConfiguration *RuntimeConfiguration, partitionsMap *map[string]Partition, logger *zap.SugaredLogger) {
+	for _, partition := range runtimeConfiguration.ignoredPartitions {
+		delete(*partitionsMap, partition)
+		logger.Debugf("Removed partition %s from the map.", partition)
+	}
+}
+
 // This function prints
-func presentInformation(partitionsMap *map[string]Partition, queueStateFileInfo *os.FileInfo, logger *zap.SugaredLogger) {
+func presentInformation(runtimeConfiguration *RuntimeConfiguration, partitionsMap *map[string]Partition, queueStateFileInfo *os.FileInfo, logger *zap.SugaredLogger) {
 
 	// Just print what we have for inspection.
 	for key, value := range *partitionsMap {
@@ -364,30 +477,30 @@ func presentInformation(partitionsMap *map[string]Partition, queueStateFileInfo 
 	// We have a table object after that point.
 	partitionStateTable := table.NewWriter()
 	partitionStateTable.SetOutputMirror(os.Stdout)
-	
+
 	// Give our table a nice title.
-	partitionStateTable.SetTitle("TRUBA Paritions State")
-	
+	partitionStateTable.SetTitle(runtimeConfiguration.tableTitle)
+
 	// And define our column names. This library can wrap the column names the way we want.
 	partitionStateTable.AppendHeader(table.Row{"Partition\nName", "CPUs\n(Free)", "CPUs\n(Total)", "Wait. Jobs\n(Resources)", "Wait. Jobs\n(Total)", "Nodes\n(Total)", "Max. Job Time\n(D-HH:MM:SS)", "Min. Nodes\nper Job", "Max. Nodes\nper Job", "Core\nper Node", "RAM (MB)\nper Core"})
 
-	// Then add the rows with the data we have. 
+	// Then add the rows with the data we have.
 	for _, details := range *partitionsMap {
 		partitionStateTable.AppendRow(table.Row{details.name, details.idleProcessors, details.totalProcessors, details.resourceWaitingJobsCount, details.waitingJobsCount, details.totalNodes, details.maximumTimePerJob, details.minimumNodesPerJob, details.maximumNodesPerJob, details.totalCoresPerNode, details.totalMemoryPerCore})
 	}
-	
+
 	// Sort the table before according to partition names.
 	partitionStateTable.SortBy([]table.SortBy{
-	    {Name: "Partition\nName", Mode: table.Asc},
-    })
-    
-    // Add a footer with the last update date.
+		{Name: "Partition\nName", Mode: table.Asc},
+	})
+
+	// Add a footer with the last update date.
 	partitionStateTable.AppendFooter(table.Row{"Last update:", (*queueStateFileInfo).ModTime().Format(time.RFC822)})
-    
-    // Let us look fancier:
-    partitionStateTable.SetStyle(table.StyleColoredYellowWhiteOnBlack)
-    
-    // Let there be light!
+
+	// Let us look fancier:
+	partitionStateTable.SetStyle(table.StyleColoredYellowWhiteOnBlack)
+
+	// Let there be light!
 	partitionStateTable.Render()
 }
 
@@ -396,7 +509,7 @@ func main() {
 	// doesn't support reconfiguration. For a completely reconfigurable variant,
 	// there's Thales' flume (https://github.com/ThalesGroup/flume)
 	zapDefaultConfigJSON := []byte(`{
-	  "level": "fatal",
+	  "level": "debug",
 	  "encoding": "console",
 	  "outputPaths": ["stdout"],
 	  "errorOutputPaths": ["stderr"],
@@ -427,6 +540,31 @@ func main() {
 	sugaredLogger := logger.Sugar()
 	sugaredLogger.Debugf("Logger is up.")
 
+	// Next, create a runtime configuration and initialize it with default values.
+	var runtimeConfiguration RuntimeConfiguration
+	initializeDefeaultValues(&runtimeConfiguration, sugaredLogger)
+
+	// Then, let's apply the configuration on top of it.
+	readAndApplyConfiguration(&runtimeConfiguration, sugaredLogger)
+
+	// After finishing logger initialization, we will handle our flags next.
+	versionRequested := false
+	flag.BoolVar(&versionRequested, "version", false, "Show version information and exit.")
+	flag.BoolVar(&versionRequested, "v", false, "Show version information and exit.")
+
+	// Let's parse the flags and see what we have.
+	flag.Parse()
+
+	// If user wants to see the version, just show it and exit cleanly.
+	if versionRequested {
+		// Clean the path information which might be appended during the execution
+		// to make the output consistent and parseable.
+		sugaredLogger.Debugf("Version requested, showing and exiting.")
+		applicationName := strings.Split(os.Args[0], "/")
+		fmt.Printf("%s version %s\n", applicationName[len(applicationName)-1], runtimeConfiguration.softwareVersion)
+		os.Exit(0)
+	}
+
 	// Start by getting the partitions & the raw information via sinfo.
 	partitionInformation := getPartitionsInformation(sugaredLogger)
 
@@ -435,6 +573,7 @@ func main() {
 
 	// Let's get the data that we need.
 	partitionsMap := parsePartitionsInformation(partitionInformation, sugaredLogger)
-	queueStateFileInfo := parseQueueStateFile(&partitionsMap, "/var/cache/lssrv/squeue.state", sugaredLogger)
-	presentInformation(&partitionsMap, &queueStateFileInfo, sugaredLogger)
+	queueStateFileInfo := parseQueueStateFile(&runtimeConfiguration, &partitionsMap, sugaredLogger)
+	removeIgnoredQueues(&runtimeConfiguration, &partitionsMap, sugaredLogger)
+	presentInformation(&runtimeConfiguration, &partitionsMap, &queueStateFileInfo, sugaredLogger)
 }

@@ -2,6 +2,18 @@
 
 Global changelog file. Please use markdown formatting and write most recent changes on top. Dates use ISO formatting.
 
+## 20240122
+- proj: Release version 2.0.0
+- docs: Update documentation and files.
+- proj: Update configuration file with the new example.
+- feat: Added ability to customize table title.
+- feat: Added ability to filter out partitions from final table.
+- feat: Added ability to set queue state file location.
+- feat: Added ability to auto-find config file with fallbacks.
+- feat: Added ability to run without partial and no config (bulletproof defaults).
+- feat: Add `flag` support to add versioning information.
+- feat: `lssrv` can show its own version now.
+
 ## 20240121
 - refactor: Remove Python codebase.
 - refactor: Update `cron.d/lssrv_helper` to be compatible with the Go version.
