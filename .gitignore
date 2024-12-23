@@ -1,3 +1,5 @@
+# Binary build artifacts
+src/lssrv
 # Temp files.
 *.swp
 *~
