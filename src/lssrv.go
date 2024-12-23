@@ -509,7 +509,7 @@ func main() {
 	// doesn't support reconfiguration. For a completely reconfigurable variant,
 	// there's Thales' flume (https://github.com/ThalesGroup/flume)
 	zapDefaultConfigJSON := []byte(`{
-	  "level": "debug",
+	  "level": "error",
 	  "encoding": "console",
 	  "outputPaths": ["stdout"],
 	  "errorOutputPaths": ["stderr"],
